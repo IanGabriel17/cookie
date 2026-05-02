@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% load bakery_extras %}
+{% block page_title %}Point of Sale{% endblock %}
+{% block content %}
+<form method="post" id="posForm">
+    {% csrf_token %}
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <section class="panel-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3 class="section-title">Create Sale</h3>
+                    <button type="button" class="btn btn-outline-secondary" id="addPosRow">Add Item</button>
+                </div>
+                <div id="posRows">
+                    <div class="row g-3 pos-row mb-2">
+                        <div class="col-md-7">
+                            <label class="form-label">Product</label>
+                            <select name="product_id" class="form-select pos-product" required>
+                                <option value="">Choose product</option>
+                                {% for product in products %}
+                                <option value="{{ product.id }}" data-price="{{ product.price }}">{{ product.name }} | {{ product.stock_quantity }} in stock</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Quantity</label>
+                            <input type="number" name="quantity" min="1" value="1" class="form-control pos-quantity" required>
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <button type="button" class="btn btn-outline-danger w-100 remove-row">Remove</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        <div class="col-lg-4">
+            <section class="panel-card">
+                <h3 class="section-title">Checkout</h3>
+                <div class="mb-3">
+                    <label class="form-label">Payment Type</label>
+                    <select name="payment_type" class="form-select">
+                        {% for value, label in payment_types %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Payment Amount</label>
+                    <input type="number" name="payment_amount" step="0.01" class="form-control" min="0" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Notes</label>
+                    <textarea name="notes" rows="3" class="form-control"></textarea>
+                </div>
+                <div class="checkout-summary">
+                    <p><span>Total</span><strong id="posTotal">PHP 0.00</strong></p>
+                </div>
+                <button class="btn btn-primary w-100">Complete Sale</button>
+            </section>
+        </div>
+    </div>
+</form>
+{% endblock %}
+{% block extra_js %}
+<script>
+const rowTemplate = `
+<div class="row g-3 pos-row mb-2">
+    <div class="col-md-7">
+        <label class="form-label">Product</label>
+        <select name="product_id" class="form-select pos-product" required>
+            <option value="">Choose product</option>
+            {% for product in products %}
+            <option value="{{ product.id }}" data-price="{{ product.price }}">{{ product.name }} | {{ product.stock_quantity }} in stock</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Quantity</label>
+        <input type="number" name="quantity" min="1" value="1" class="form-control pos-quantity" required>
+    </div>
+    <div class="col-md-2 d-flex align-items-end">
+        <button type="button" class="btn btn-outline-danger w-100 remove-row">Remove</button>
+    </div>
+</div>`;
+
+const rowsContainer = document.getElementById("posRows");
+const totalField = document.getElementById("posTotal");
+
+function calculatePosTotal() {
+    let total = 0;
+    document.querySelectorAll(".pos-row").forEach((row) => {
+        const product = row.querySelector(".pos-product");
+        const quantity = parseFloat(row.querySelector(".pos-quantity").value || 0);
+        const selected = product.options[product.selectedIndex];
+        const price = parseFloat(selected?.dataset.price || 0);
+        total += price * quantity;
+    });
+    totalField.textContent = `PHP ${total.toFixed(2)}`;
+}
+
+document.getElementById("addPosRow").addEventListener("click", () => {
+    rowsContainer.insertAdjacentHTML("beforeend", rowTemplate);
+});
+
+document.addEventListener("input", (event) => {
+    if (event.target.matches(".pos-product, .pos-quantity")) {
+        calculatePosTotal();
+    }
+});
+
+document.addEventListener("click", (event) => {
+    if (event.target.matches(".remove-row")) {
+        if (document.querySelectorAll(".pos-row").length > 1) {
+            event.target.closest(".pos-row").remove();
+            calculatePosTotal();
+        }
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load bakery_extras %}
+{% block page_title %}Overview{% endblock %}
+{% block content %}
+<section class="metric-grid mb-4">
+    <div class="metric-card"><span>Daily Sales</span><strong>{{ daily_sales|currency }}</strong></div>
+    <div class="metric-card"><span>Monthly Sales</span><strong>{{ monthly_sales|currency }}</strong></div>
+    <div class="metric-card"><span>Best Sellers</span><strong>{{ top_products|length }}</strong></div>
+    <div class="metric-card"><span>Low Stock</span><strong>{{ low_stock_count }}</strong></div>
+</section>
+
+<section class="dashboard-layout">
+    <div class="panel-card">
+        <div class="panel-topline">
+            <h3 class="section-title">Recent Transactions</h3>
+            <a href="{% url 'pos' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New sale</a>
+        </div>
+        <div class="table-responsive">
+            <table class="table bakery-table align-middle">
+                <thead><tr><th>Receipt</th><th>Cashier</th><th>Total</th><th>Date</th></tr></thead>
+                <tbody>
+                    {% for sale in recent_transactions %}
+                    <tr>
+                        <td><a href="{% url 'sale-receipt' sale.pk %}">{{ sale.receipt_number }}</a></td>
+                        <td>{{ sale.cashier.username }}</td>
+                        <td>{{ sale.total_amount|currency }}</td>
+                        <td>{{ sale.sold_at|date:"M d, Y h:i A" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="text-center text-muted">No transactions yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <aside class="dashboard-side">
+        <div class="panel-card">
+            <div class="panel-topline">
+                <h3 class="section-title">Low Stock</h3>
+                <a href="{% url 'inventory-dashboard' %}" class="soft-link">Inventory</a>
+            </div>
+            <div class="list-stack">
+                {% for product in low_products %}
+                <div class="list-item"><span>{{ product.name }}</span><strong>{{ product.stock_quantity }} pcs</strong></div>
+                {% endfor %}
+                {% for ingredient in low_ingredients %}
+                <div class="list-item"><span>{{ ingredient.name }}</span><strong>{{ ingredient.quantity_in_stock }} {{ ingredient.unit }}</strong></div>
+                {% empty %}
+                {% if low_products|length == 0 %}<p class="text-muted mb-0">Inventory levels look healthy.</p>{% endif %}
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="panel-card">
+            <div class="panel-topline">
+                <h3 class="section-title">Best Sellers</h3>
+                <a href="{% url 'sale-list' %}" class="soft-link">Sales</a>
+            </div>
+            <div class="list-stack">
+                {% for product in top_products %}
+                <div class="list-item"><span>{{ product.name }}</span><strong>{{ product.total_sold|default:0 }} sold</strong></div>
+                {% empty %}
+                <p class="text-muted mb-0">No sales yet.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </aside>
+</section>
+{% endblock %}

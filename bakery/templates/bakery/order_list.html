@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% load bakery_extras %}
+{% block page_title %}Orders{% endblock %}
+{% block content %}
+<section class="panel-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="section-title">Custom Cake and Pre-orders</h3>
+        <a href="{% url 'order-add' %}" class="btn btn-primary">Add Order</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table bakery-table">
+            <thead><tr><th>Customer</th><th>Product</th><th>Pickup</th><th>Status</th><th>Total</th><th></th></tr></thead>
+            <tbody>
+                {% for order in object_list %}
+                <tr>
+                    <td>{{ order.customer_name }}<br><span class="small text-muted">{{ order.contact }}</span></td>
+                    <td>{{ order.product.name|default:"Custom order" }}</td>
+                    <td>{{ order.pickup_date }}</td>
+                    <td><span class="badge text-bg-secondary">{{ order.get_status_display }}</span></td>
+                    <td>{{ order.estimated_total|currency }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'order-edit' order.pk %}" class="btn btn-sm btn-outline-secondary">Edit</a>
+                        <a href="{% url 'order-delete' order.pk %}" class="btn btn-sm btn-outline-danger">Delete</a>
+                    </td>
+                </tr>
+                {% empty %}<tr><td colspan="6" class="text-center text-muted">No orders yet.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

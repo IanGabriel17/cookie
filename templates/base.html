@@ -1,0 +1,106 @@
+{% load static %}
+{% load bakery_extras %}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sweet Crumbs Bakery{% endblock %}</title>
+    <script>
+        const savedTheme = localStorage.getItem("bakery-theme");
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = savedTheme || (prefersDark ? "dark" : "light");
+    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+{% if user.is_authenticated %}
+<div class="app-shell">
+    {% with current=request.resolver_match.url_name %}
+    <aside class="app-sidebar">
+        <div class="brand-lockup">
+            <div class="brand-mark"><i class="bi bi-basket2-fill"></i></div>
+        </div>
+        <nav class="side-nav" aria-label="Main navigation">
+            <a class="side-link {% if current == 'dashboard' %}side-link-active{% endif %}" href="{% url 'dashboard' %}" title="Overview"><i class="bi bi-speedometer2"></i></a>
+            {% if can_manage_sales %}
+            <a class="side-link {% if current == 'pos' %}side-link-active{% endif %}" href="{% url 'pos' %}" title="POS"><i class="bi bi-calculator"></i></a>
+            <a class="side-link {% if current == 'sale-list' or current == 'sale-receipt' %}side-link-active{% endif %}" href="{% url 'sale-list' %}" title="Sales"><i class="bi bi-receipt"></i></a>
+            {% endif %}
+            {% if can_view_inventory %}
+            <a class="side-link {% if current == 'inventory-dashboard' %}side-link-active{% endif %}" href="{% url 'inventory-dashboard' %}" title="Inventory"><i class="bi bi-box-seam"></i></a>
+            {% endif %}
+            {% if can_manage_inventory %}
+            <a class="side-link {% if current == 'product-list' or current == 'product-add' or current == 'product-edit' %}side-link-active{% endif %}" href="{% url 'product-list' %}" title="Products"><i class="bi bi-grid"></i></a>
+            <a class="side-link {% if current == 'ingredient-list' or current == 'ingredient-add' or current == 'ingredient-edit' %}side-link-active{% endif %}" href="{% url 'ingredient-list' %}" title="Ingredients"><i class="bi bi-archive"></i></a>
+            {% endif %}
+            {% if can_view_orders %}
+            <a class="side-link {% if current == 'order-list' %}side-link-active{% endif %}" href="{% url 'order-list' %}" title="Orders"><i class="bi bi-bag-check"></i></a>
+            {% endif %}
+            {% if can_view_reports %}
+            <a class="side-link {% if current == 'reports' %}side-link-active{% endif %}" href="{% url 'reports' %}" title="Reports"><i class="bi bi-bar-chart"></i></a>
+            <a class="side-link {% if current == 'inventory-logs' %}side-link-active{% endif %}" href="{% url 'inventory-logs' %}" title="Logs"><i class="bi bi-clock-history"></i></a>
+            {% endif %}
+        </nav>
+        <div class="sidebar-bottom">
+            <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button class="side-link side-button" type="submit" title="Logout"><i class="bi bi-box-arrow-right"></i></button>
+            </form>
+        </div>
+    </aside>
+    <section class="main-shell">
+    <header class="app-header">
+        <div class="header-brand">
+            <div class="brand-name">Sweet Crumbs</div>
+            <div class="brand-subtitle">bakery operations</div>
+        </div>
+        <nav class="top-nav">
+            <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+                <i class="bi bi-moon-stars"></i>
+            </button>
+            <span class="user-chip"><i class="bi bi-person-circle"></i> {{ user.username }}</span>
+        </nav>
+    </header>
+    <main class="content-area">
+        <div class="page-head">
+            <div>
+                <h1 class="page-title mb-0">{% block page_title %}Dashboard{% endblock %}</h1>
+            </div>
+        </div>
+        {% if messages %}
+        <div class="mb-4">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+    </section>
+    {% endwith %}
+</div>
+{% else %}
+<main class="auth-shell">
+    {% if messages %}
+    <div class="auth-messages">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} mb-2">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% block auth_content %}{% endblock %}
+</main>
+{% endif %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'js/app.js' %}"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

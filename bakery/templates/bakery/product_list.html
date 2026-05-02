@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% load bakery_extras %}
+{% block page_title %}Products{% endblock %}
+{% block content %}
+<section class="panel-card">
+    <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-3">
+        <form class="inventory-filters" method="get">
+            <input type="text" name="search" class="form-control" placeholder="Search products" value="{{ request.GET.search }}">
+            <select name="category" class="form-select">
+                <option value="">All Categories</option>
+                {% for category in categories %}
+                <option value="{{ category.pk }}" {% if request.GET.category == category.pk|stringformat:"s" %}selected{% endif %}>{{ category.name }}</option>
+                {% endfor %}
+            </select>
+            <select name="status" class="form-select">
+                <option value="">All Status</option>
+                {% for value, label in stock_status_choices %}
+                <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-outline-secondary">Filter</button>
+        </form>
+        <div class="d-flex gap-2">
+            <a href="{% url 'category-list' %}" class="btn btn-outline-secondary">Categories</a>
+            <a href="{% url 'inventory-dashboard' %}" class="btn btn-outline-primary">Inventory</a>
+            <a href="{% url 'product-add' %}" class="btn btn-primary">Add Product</a>
+        </div>
+    </div>
+    <div class="row g-4">
+        {% for product in object_list %}
+        <div class="col-md-6 col-xl-4">
+            <div class="product-card">
+                {% if product.product_image %}
+                <img src="{{ product.product_image.url }}" alt="{{ product.name }}" class="product-image">
+                {% else %}
+                <div class="product-image placeholder-tile">{{ product.category.name }}</div>
+                {% endif %}
+                <div class="p-3">
+                    <div class="d-flex justify-content-between align-items-start gap-3">
+                        <div>
+                            <h4 class="mb-1">{{ product.name }}</h4>
+                            <p class="small text-muted mb-2">{{ product.sku }} | {{ product.category.name }}</p>
+                        </div>
+                        {% if product.stock_status == "Out of Stock" %}
+                        <span class="badge text-bg-danger">{{ product.stock_status }}</span>
+                        {% elif product.stock_status == "Low Stock" %}
+                        <span class="badge text-bg-warning">{{ product.stock_status }}</span>
+                        {% else %}
+                        <span class="badge text-bg-success">{{ product.stock_status }}</span>
+                        {% endif %}
+                    </div>
+                    <p class="mb-1">Price: <strong>{{ product.price|currency }}</strong></p>
+                    <p class="mb-1">Cost: {{ product.cost|currency }}</p>
+                    <p class="mb-3">Stock: {{ product.stock_quantity }}</p>
+                    <form method="post" action="{% url 'product-restock' product.pk %}" class="d-flex gap-2 mb-3">
+                        {% csrf_token %}
+                        <input type="number" class="form-control" min="1" name="quantity" placeholder="Restock qty" required>
+                        <input type="hidden" name="movement" value="increase">
+                        <input type="hidden" name="note" value="Manual product restock">
+                        <button class="btn btn-outline-primary">Restock</button>
+                    </form>
+                    <div class="d-flex gap-2">
+                        <a href="{% url 'product-edit' product.pk %}" class="btn btn-outline-secondary btn-sm">Edit</a>
+                        <a href="{% url 'product-delete' product.pk %}" class="btn btn-outline-danger btn-sm">Delete</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12"><p class="text-muted">No products yet.</p></div>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% load bakery_extras %}
+{% block page_title %}Sales{% endblock %}
+{% block content %}
+<section class="panel-card">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="section-title">Transactions</h3>
+        <a href="{% url 'pos' %}" class="btn btn-primary">Open POS</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table bakery-table">
+            <thead><tr><th>Receipt</th><th>Cashier</th><th>Payment</th><th>Total</th><th>Profit</th><th>Date</th></tr></thead>
+            <tbody>
+                {% for sale in object_list %}
+                <tr>
+                    <td><a href="{% url 'sale-receipt' sale.pk %}">{{ sale.receipt_number }}</a></td>
+                    <td>{{ sale.cashier.username }}</td>
+                    <td>{{ sale.get_payment_type_display }}</td>
+                    <td>{{ sale.total_amount|currency }}</td>
+                    <td>{{ sale.total_profit|currency }}</td>
+                    <td>{{ sale.sold_at|date:"M d, Y h:i A" }}</td>
+                </tr>
+                {% empty %}<tr><td colspan="6" class="text-center text-muted">No sales yet.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

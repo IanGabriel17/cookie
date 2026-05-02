@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Login | Sweet Crumbs Bakery{% endblock %}
+{% block auth_content %}
+<section class="login-panel">
+    <div class="login-copy">
+        <div class="brand-pill">Bakery OS</div>
+        <h1>Sweet Crumbs Bakery</h1>
+        <p>Manage sales, ingredients, custom cake orders, and low-stock alerts from a single bakery dashboard.</p>
+    </div>
+    <div class="login-card">
+        <h2 class="mb-4">Sign In</h2>
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                {{ form.username }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                {{ form.password }}
+            </div>
+            <button class="btn btn-primary w-100">Login</button>
+        </form>
+        <p class="text-muted small mt-3 mb-0">Demo accounts are listed in the README after setup.</p>
+    </div>
+</section>
+{% endblock %}

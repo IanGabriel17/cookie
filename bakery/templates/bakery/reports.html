@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load bakery_extras %}
+{% block page_title %}Reports{% endblock %}
+{% block content %}
+<section class="row g-4 mb-4">
+    <div class="col-md-6"><div class="metric-card"><span>Total Sales</span><strong>{{ total_sales|currency }}</strong></div></div>
+    <div class="col-md-6"><div class="metric-card"><span>Total Profit</span><strong>{{ total_profit|currency }}</strong></div></div>
+</section>
+<section class="panel-card mb-4">
+    <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
+        <div>
+            <h3 class="section-title mb-1">Exports</h3>
+            <p class="text-muted mb-0">Download bakery sales reports in PDF or Excel.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'sales-pdf' %}" class="btn btn-outline-secondary">Export PDF</a>
+            <a href="{% url 'sales-excel' %}" class="btn btn-primary">Export Excel</a>
+            {% if user.is_superuser %}
+            <a href="{% url 'backup-database' %}" class="btn btn-outline-dark">Backup DB</a>
+            {% endif %}
+        </div>
+    </div>
+</section>
+<section class="row g-4">
+    <div class="col-lg-7">
+        <div class="panel-card">
+            <h3 class="section-title">Recent Sales</h3>
+            <div class="table-responsive">
+                <table class="table bakery-table">
+                    <thead><tr><th>Receipt</th><th>Total</th><th>Profit</th></tr></thead>
+                    <tbody>
+                        {% for sale in sales %}
+                        <tr><td>{{ sale.receipt_number }}</td><td>{{ sale.total_amount|currency }}</td><td>{{ sale.total_profit|currency }}</td></tr>
+                        {% empty %}<tr><td colspan="3" class="text-center text-muted">No sales yet.</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="panel-card">
+            <h3 class="section-title">Top Profit Products</h3>
+            <div class="list-stack">
+                {% for product in product_profits %}
+                <div class="list-item"><span>{{ product.name }}</span><strong>{{ product.profit_value|default:0|currency }}</strong></div>
+                {% empty %}<p class="text-muted mb-0">No profit data yet.</p>{% endfor %}
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
