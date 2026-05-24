@@ -7,11 +7,10 @@
         <div class="inventory-title-row">
             <div>
                 <div class="muted-label">STOCK ROOM</div>
-                <p class="text-muted mb-0">Fresh counts, supplier details, and stock movement.</p>
+                <p class="text-muted mb-0">Fresh product counts, supplier details, and stock movement.</p>
             </div>
             <div class="d-flex gap-2">
-                <a href="{% url 'purchase-add' %}" class="btn btn-outline-primary"><i class="bi bi-plus-lg"></i> Add entry</a>
-                <a href="{% url 'ingredient-add' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add stock</a>
+                <a href="{% url 'product-add' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add product</a>
             </div>
         </div>
 
@@ -21,11 +20,6 @@
                 {% for category in categories %}
                 <option value="{{ category.pk }}" {% if request.GET.category == category.pk|stringformat:"s" %}selected{% endif %}>Category: {{ category.name }}</option>
                 {% endfor %}
-            </select>
-            <select name="type" class="form-select">
-                <option value="">Type: All</option>
-                <option value="products" {% if request.GET.type == "products" %}selected{% endif %}>Type: Products</option>
-                <option value="ingredients" {% if request.GET.type == "ingredients" %}selected{% endif %}>Type: Stock Items</option>
             </select>
             <select name="status" class="form-select">
                 <option value="">Status: All</option>
@@ -100,7 +94,6 @@
                         {% if can_manage_inventory %}
                         <td class="text-end">
                             <div class="inventory-actions">
-                                {% if row.kind == "Product" %}
                                 <form method="post" action="{% url 'product-restock' row.object.pk %}" class="stock-move-form compact-stock-form">
                                     {% csrf_token %}
                                     <input type="hidden" name="next" value="{{ request.get_full_path }}">
@@ -121,28 +114,6 @@
                                 </form>
                                 <a href="{% url 'product-edit' row.object.pk %}" class="icon-action" title="Edit"><i class="bi bi-pencil"></i></a>
                                 <a href="{% url 'product-delete' row.object.pk %}" class="icon-action danger" title="Delete"><i class="bi bi-trash"></i></a>
-                                {% else %}
-                                <form method="post" action="{% url 'ingredient-restock' row.object.pk %}" class="stock-move-form compact-stock-form">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                                    <input type="number" step="0.01" class="form-control form-control-sm" min="0.01" name="quantity" placeholder="Qty" required>
-                                    <select name="movement" class="form-select form-select-sm">
-                                        <option value="increase">Add</option>
-                                        <option value="decrease">Use</option>
-                                    </select>
-                                    <select name="reason" class="form-select form-select-sm">
-                                        <option value="restock">Restock</option>
-                                        <option value="damaged">Damaged</option>
-                                        <option value="expired">Expired</option>
-                                        <option value="returned">Returned</option>
-                                        <option value="sampling">Sample</option>
-                                        <option value="staff_consumption">Staff</option>
-                                    </select>
-                                    <button class="btn btn-sm btn-outline-primary"><i class="bi bi-check-lg"></i></button>
-                                </form>
-                                <a href="{% url 'ingredient-edit' row.object.pk %}" class="icon-action" title="Edit"><i class="bi bi-pencil"></i></a>
-                                <a href="{% url 'ingredient-delete' row.object.pk %}" class="icon-action danger" title="Delete"><i class="bi bi-trash"></i></a>
-                                {% endif %}
                             </div>
                         </td>
                         {% endif %}
@@ -154,7 +125,6 @@
             </table>
         </div>
         <div class="inventory-footer">
-            <a href="{% url 'purchase-list' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-clock-history"></i> Stock entries</a>
             <a href="{% url 'inventory-logs' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-list-ul"></i> Movement logs</a>
         </div>
     </section>

@@ -10,14 +10,13 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib.auth.views import LoginView, LogoutView, PasswordResetCompleteView, PasswordResetConfirmView, PasswordResetDoneView, PasswordResetView
 from django.core.exceptions import ValidationError
-from django.core.mail import send_mail
 from django.db import connections, transaction
 from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
 from django.db.models.deletion import ProtectedError
 from django.db.models.functions import TruncDate
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse, reverse_lazy
+from django.urls import reverse_lazy
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DeleteView, FormView, ListView, TemplateView, UpdateView
@@ -33,35 +32,27 @@ from .forms import (
     CategoryForm,
     EmployeeCreateForm,
     EmployeeUpdateForm,
-    IngredientForm,
-    IngredientPurchaseForm,
     LoginForm,
     OrderForm,
     PasswordResetRequestForm,
     ProductionBatchForm,
     ProductForm,
-    RecipeForm,
-    RestockIngredientForm,
     RestockProductForm,
     SecureSetPasswordForm,
     SupplierForm,
     VoidSaleForm,
 )
-from .models import ActivityLog, Category, EmailVerification, Ingredient, IngredientPurchase, InventoryLog, LoginHistory, Order, Product, ProductionBatch, Recipe, Sale, Supplier
+from .models import ActivityLog, Category, InventoryLog, LoginHistory, Order, Product, ProductionBatch, Sale, Supplier
 from .permissions import RoleRequiredMixin, user_has_role
 from .services import (
     ROLE_ADMIN,
     ROLE_CASHIER,
     ROLE_INVENTORY,
-    adjust_ingredient_stock,
     adjust_product_stock,
     bootstrap_default_categories,
     bootstrap_roles,
     create_sale,
     log_activity,
-    reconcile_purchase_update,
-    record_purchase,
-    reverse_purchase_stock,
     void_sale,
 )
 
@@ -98,9 +89,32 @@ def client_ip(request):
 def is_owner_account(user):
     if not user:
         return False
-    if user.username == "admin":
+    return user.is_superuser
+
+
+def user_has_admin_access(user):
+    if not user:
+        return False
+    return user.is_superuser or user.groups.filter(name=ROLE_ADMIN).exists()
+
+
+def active_admin_access_count():
+    return User.objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(groups__name=ROLE_ADMIN)).distinct().count()
+
+
+def is_protected_admin_account(user):
+    if not user:
+        return False
+    if is_owner_account(user):
         return True
-    return user.is_superuser and User.objects.filter(is_superuser=True, is_active=True).count() <= 1
+    return user.is_active and user_has_admin_access(user) and active_admin_access_count() <= 1
+
+
+def would_remove_last_admin_access(user, *, role, is_active):
+    if not user or not user.is_active or not user_has_admin_access(user):
+        return False
+    will_have_admin_access = bool(is_active) and (user.is_superuser or role == ROLE_ADMIN)
+    return not will_have_admin_access and active_admin_access_count() <= 1
 
 
 def filter_products_by_status(queryset, status):
@@ -110,16 +124,6 @@ def filter_products_by_status(queryset, status):
         return queryset.filter(stock_quantity__gt=0, stock_quantity__lte=F("low_stock_threshold"))
     if status == "out":
         return queryset.filter(stock_quantity=0)
-    return queryset
-
-
-def filter_ingredients_by_status(queryset, status):
-    if status == "in":
-        return queryset.filter(quantity_in_stock__gt=F("reorder_level"))
-    if status == "low":
-        return queryset.filter(quantity_in_stock__gt=0, quantity_in_stock__lte=F("reorder_level"))
-    if status == "out":
-        return queryset.filter(quantity_in_stock__lte=0)
     return queryset
 
 
@@ -170,77 +174,6 @@ class BakeryPasswordResetCompleteView(PasswordResetCompleteView):
     template_name = "bakery/password_reset_complete.html"
 
 
-def send_employee_verification_email(request, user):
-    email = (user.email or "").strip()
-    if not email:
-        return None
-
-    user.email_verifications.filter(verified_at__isnull=True).update(expires_at=timezone.now())
-    activate_on_verify = user.is_active
-    if activate_on_verify:
-        user.is_active = False
-        user.save(update_fields=["is_active"])
-
-    verification = EmailVerification.objects.create(
-        user=user,
-        email=email,
-        activate_on_verify=activate_on_verify,
-    )
-    verify_url = request.build_absolute_uri(reverse("verify-email", args=[verification.token]))
-    send_mail(
-        subject="Verify your Sweet Crumbs Bakery account",
-        message=(
-            f"Hi {user.get_username()},\n\n"
-            "Please verify your email address to activate your Sweet Crumbs Bakery account:\n"
-            f"{verify_url}\n\n"
-            f"This link expires on {timezone.localtime(verification.expires_at).strftime('%Y-%m-%d %I:%M %p')}."
-        ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[email],
-        fail_silently=True,
-    )
-    log_activity(
-        user=request.user,
-        action=ActivityLog.ACTION_EMAIL,
-        instance=user,
-        description=f"Sent email verification to {email}.",
-        ip_address=client_ip(request),
-    )
-    return verification
-
-
-def verify_email_view(request, token):
-    verification = EmailVerification.objects.select_related("user").filter(token=token).first()
-    if not verification:
-        messages.error(request, "Verification link is invalid.")
-        return redirect("login")
-    if verification.is_verified:
-        messages.info(request, "This email address is already verified.")
-        return redirect("login")
-    if verification.is_expired:
-        messages.error(request, "Verification link has expired. Ask an admin to resend verification.")
-        return redirect("login")
-
-    verification.verified_at = timezone.now()
-    verification.save(update_fields=["verified_at", "updated_at"])
-
-    user = verification.user
-    user.email = verification.email
-    if verification.activate_on_verify:
-        user.is_active = True
-    user.save(update_fields=["email", "is_active"])
-
-    log_activity(
-        user=user,
-        action=ActivityLog.ACTION_EMAIL,
-        instance=user,
-        description=f"Verified email address {verification.email}.",
-        ip_address=client_ip(request),
-    )
-    messages.success(request, "Email verified. You can sign in now.")
-    return redirect("login")
-
-
 class DashboardView(RoleRequiredMixin, TemplateView):
     template_name = "bakery/dashboard.html"
     allowed_roles = (ROLE_ADMIN, ROLE_CASHIER, ROLE_INVENTORY)
@@ -261,9 +194,7 @@ class DashboardView(RoleRequiredMixin, TemplateView):
         )
         recent_transactions = Sale.objects.select_related("cashier").prefetch_related("items__product")[:6]
         low_products_queryset = Product.objects.filter(stock_quantity__lte=F("low_stock_threshold"), is_active=True).order_by("stock_quantity")
-        low_ingredients_queryset = Ingredient.objects.filter(quantity_in_stock__lte=F("reorder_level")).order_by("quantity_in_stock")
         low_products = low_products_queryset[:6]
-        low_ingredients = low_ingredients_queryset[:6]
         active_products = Product.objects.filter(is_archived=False)
         sales_series = (
             Sale.objects.filter(sold_at__date__gte=trend_start, status=Sale.STATUS_COMPLETED)
@@ -292,10 +223,8 @@ class DashboardView(RoleRequiredMixin, TemplateView):
                 "recent_transactions": recent_transactions,
                 "top_products": top_products,
                 "low_products": low_products,
-                "low_ingredients": low_ingredients,
                 "low_product_count": low_products_queryset.count(),
-                "low_ingredient_count": low_ingredients_queryset.count(),
-                "low_stock_count": low_products_queryset.count() + low_ingredients_queryset.count(),
+                "low_stock_count": low_products_queryset.count(),
                 "chart_labels": [day.strftime("%b %d") for day in trend_days],
                 "chart_values": [float(sales_by_day.get(day, Decimal("0.00"))) for day in trend_days],
                 "inventory_movement_labels": [day.strftime("%b %d") for day in trend_days],
@@ -537,21 +466,15 @@ class InventoryDashboardView(RoleRequiredMixin, TemplateView):
         status = self.request.GET.get("status", "")
 
         products = Product.objects.select_related("category").order_by("name")
-        ingredients = Ingredient.objects.select_related("supplier").order_by("name")
 
         if search:
             products = products.filter(Q(name__icontains=search) | Q(sku__icontains=search) | Q(category__name__icontains=search))
-            ingredients = ingredients.filter(Q(name__icontains=search) | Q(unit__icontains=search) | Q(supplier__name__icontains=search))
         if category:
             products = products.filter(category_id=category)
-            ingredients = Ingredient.objects.none()
 
         products = filter_products_by_status(products, status)
-        ingredients = filter_ingredients_by_status(ingredients, status)
 
-        if item_type == "products":
-            ingredients = Ingredient.objects.none()
-        elif item_type == "ingredients":
+        if item_type and item_type != "products":
             products = Product.objects.none()
 
         inventory_rows = [
@@ -579,43 +502,15 @@ class InventoryDashboardView(RoleRequiredMixin, TemplateView):
             }
             for product in products
         ]
-        inventory_rows.extend(
-            [
-                {
-                    "kind": "Stock Item",
-                    "name": ingredient.name,
-                    "sku": f"STK-{ingredient.pk:04d}",
-                    "item_id": f"ING-{ingredient.pk:04d}",
-                    "barcode": "",
-                    "category": "Raw Material",
-                    "category_color": "#64748b",
-                    "available_stock": ingredient.quantity_in_stock,
-                    "reserved_stock": 0,
-                    "sold_stock": 0,
-                    "unit": ingredient.unit,
-                    "cost_price": ingredient.cost_per_unit,
-                    "price": ingredient.cost_per_unit,
-                    "supplier": ingredient.supplier.name if ingredient.supplier else "",
-                    "production_date": None,
-                    "expiration_date": ingredient.expiration_date,
-                    "status": ingredient.stock_status,
-                    "stock_status": ingredient.stock_status,
-                    "image": None,
-                    "object": ingredient,
-                }
-                for ingredient in ingredients
-            ]
-        )
 
         stock_issues = Product.objects.filter(stock_quantity__lte=F("low_stock_threshold"), is_active=True).count()
-        stock_issues += Ingredient.objects.filter(quantity_in_stock__lte=F("reorder_level")).count()
 
         context.update(
             {
                 "inventory_rows": inventory_rows,
                 "categories": Category.objects.all(),
                 "stock_status_choices": STOCK_STATUS_CHOICES,
-                "sku_total": Product.objects.count() + Ingredient.objects.count(),
+                "sku_total": Product.objects.count(),
                 "products_reserved": Order.objects.exclude(status=Order.STATUS_CLAIMED).aggregate(total=Sum("quantity"))["total"] or 0,
                 "stock_issues": stock_issues,
                 "featured_stock": inventory_rows[0] if inventory_rows else None,
@@ -623,75 +518,6 @@ class InventoryDashboardView(RoleRequiredMixin, TemplateView):
             }
         )
         return context
-
-
-class IngredientListView(BaseListView):
-    model = Ingredient
-    template_name = "bakery/ingredient_list.html"
-
-    def get_queryset(self):
-        queryset = Ingredient.objects.select_related("supplier")
-        search = self.request.GET.get("search", "").strip()
-        supplier = self.request.GET.get("supplier", "")
-        status = self.request.GET.get("status", "")
-        if search:
-            queryset = queryset.filter(Q(name__icontains=search) | Q(unit__icontains=search) | Q(supplier__name__icontains=search))
-        if supplier:
-            queryset = queryset.filter(supplier_id=supplier)
-        queryset = filter_ingredients_by_status(queryset, status)
-        return queryset
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context.update(
-            {
-                "suppliers": Supplier.objects.all(),
-                "stock_status_choices": STOCK_STATUS_CHOICES,
-            }
-        )
-        return context
-
-
-class IngredientCreateView(BaseCreateView):
-    model = Ingredient
-    form_class = IngredientForm
-    success_url = reverse_lazy("ingredient-list")
-
-
-class IngredientUpdateView(BaseUpdateView):
-    model = Ingredient
-    form_class = IngredientForm
-    success_url = reverse_lazy("ingredient-list")
-
-
-class IngredientDeleteView(BaseDeleteView):
-    model = Ingredient
-    success_url = reverse_lazy("ingredient-list")
-
-
-class RecipeListView(BaseListView):
-    model = Recipe
-    template_name = "bakery/recipe_list.html"
-
-    def get_queryset(self):
-        return Recipe.objects.select_related("product", "ingredient")
-
-
-class RecipeCreateView(BaseCreateView):
-    model = Recipe
-    form_class = RecipeForm
-    success_url = reverse_lazy("recipe-list")
-
-
-class RecipeUpdateView(BaseUpdateView):
-    model = Recipe
-    form_class = RecipeForm
-    success_url = reverse_lazy("recipe-list")
-
-
-class RecipeDeleteView(BaseDeleteView):
-    model = Recipe
-    success_url = reverse_lazy("recipe-list")
 
 
 class SupplierListView(BaseListView):
@@ -807,73 +633,13 @@ class ProductionBatchDeleteView(BaseDeleteView):
     allowed_roles = (ROLE_ADMIN, ROLE_INVENTORY)
 
 
-class PurchaseListView(BaseListView):
-    model = IngredientPurchase
-    template_name = "bakery/purchase_list.html"
-
-    def get_queryset(self):
-        return IngredientPurchase.objects.select_related("supplier", "ingredient")
-
-
-class PurchaseCreateView(BaseCreateView):
-    model = IngredientPurchase
-    form_class = IngredientPurchaseForm
-    success_url = reverse_lazy("purchase-list")
-
-    def form_valid(self, form):
-        with transaction.atomic():
-            self.object = form.save()
-            record_purchase(purchase=self.object, user=self.request.user)
-        messages.success(self.request, "Ingredient purchase recorded and stock updated.")
-        return redirect(self.get_success_url())
-
-
-class PurchaseUpdateView(BaseUpdateView):
-    model = IngredientPurchase
-    form_class = IngredientPurchaseForm
-    success_url = reverse_lazy("purchase-list")
-
-    def form_valid(self, form):
-        previous_purchase = IngredientPurchase.objects.select_related("ingredient", "supplier").get(pk=self.object.pk)
-        try:
-            with transaction.atomic():
-                self.object = form.save()
-                reconcile_purchase_update(
-                    purchase=self.object,
-                    previous_purchase=previous_purchase,
-                    user=self.request.user,
-                )
-        except ValidationError as exc:
-            form.add_error(None, exc)
-            return self.form_invalid(form)
-        messages.success(self.request, "Purchase updated and stock reconciled.")
-        return redirect(self.get_success_url())
-
-
-class PurchaseDeleteView(BaseDeleteView):
-    model = IngredientPurchase
-    success_url = reverse_lazy("purchase-list")
-
-    def post(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        try:
-            with transaction.atomic():
-                reverse_purchase_stock(purchase=self.object, user=request.user)
-                self.object.delete()
-        except ValidationError as exc:
-            messages.error(request, "; ".join(exc.messages))
-            return redirect(self.get_success_url())
-        messages.success(request, "Purchase deleted and stock reconciled.")
-        return redirect(self.get_success_url())
-
-
 class InventoryLogListView(BaseListView):
     model = InventoryLog
     template_name = "bakery/inventory_log_list.html"
     paginate_by = 20
 
     def get_queryset(self):
-        return InventoryLog.objects.select_related("product", "ingredient", "user", "sale", "purchase")
+        return InventoryLog.objects.select_related("product", "user", "sale")
 
 
 class ActivityLogListView(RoleRequiredMixin, ListView):
@@ -945,11 +711,17 @@ class EmployeeListView(RoleRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["roles"] = [ROLE_ADMIN, ROLE_CASHIER, ROLE_INVENTORY]
-        context["protected_user_ids"] = [user.pk for user in User.objects.filter(username="admin")] + (
-            [User.objects.filter(is_superuser=True, is_active=True).first().pk]
-            if User.objects.filter(is_superuser=True, is_active=True).count() == 1
-            else []
-        )
+        protected_user_ids = set(User.objects.filter(is_superuser=True).values_list("pk", flat=True))
+        if active_admin_access_count() <= 1:
+            protected_admin = (
+                User.objects.filter(is_active=True)
+                .filter(Q(is_superuser=True) | Q(groups__name=ROLE_ADMIN))
+                .distinct()
+                .first()
+            )
+            if protected_admin:
+                protected_user_ids.add(protected_admin.pk)
+        context["protected_user_ids"] = protected_user_ids
         return context
 
 
@@ -966,7 +738,6 @@ class EmployeeCreateView(RoleRequiredMixin, CreateView):
 
     def form_valid(self, form):
         response = super().form_valid(form)
-        verification = send_employee_verification_email(self.request, self.object)
         log_activity(
             user=self.request.user,
             action=ActivityLog.ACTION_CREATE,
@@ -974,10 +745,7 @@ class EmployeeCreateView(RoleRequiredMixin, CreateView):
             description=f"Created employee account {self.object.username}.",
             ip_address=client_ip(self.request),
         )
-        if verification:
-            messages.success(self.request, f"Employee account created. Verification email sent to {verification.email}.")
-        else:
-            messages.success(self.request, "Employee account created.")
+        messages.success(self.request, "Employee account created.")
         return response
 
 
@@ -993,14 +761,17 @@ class EmployeeUpdateView(RoleRequiredMixin, UpdateView):
         return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
-        previous_email = self.object.email
         if is_owner_account(self.object) and not form.cleaned_data.get("is_active", True):
-            form.add_error("is_active", "The main owner/admin account cannot be archived.")
+            form.add_error("is_active", "Owner/admin accounts cannot be archived.")
+            return self.form_invalid(form)
+        if would_remove_last_admin_access(
+            self.object,
+            role=form.cleaned_data.get("role"),
+            is_active=form.cleaned_data.get("is_active", True),
+        ):
+            form.add_error("role", "At least one active admin account is required.")
             return self.form_invalid(form)
         response = super().form_valid(form)
-        verification = None
-        if self.object.email and self.object.email != previous_email:
-            verification = send_employee_verification_email(self.request, self.object)
         log_activity(
             user=self.request.user,
             action=ActivityLog.ACTION_UPDATE,
@@ -1008,10 +779,7 @@ class EmployeeUpdateView(RoleRequiredMixin, UpdateView):
             description=f"Updated employee account {self.object.username}.",
             ip_address=client_ip(self.request),
         )
-        if verification:
-            messages.success(self.request, f"Employee account updated. Verification email sent to {verification.email}.")
-        else:
-            messages.success(self.request, "Employee account updated.")
+        messages.success(self.request, "Employee account updated.")
         return response
 
 
@@ -1023,8 +791,8 @@ class EmployeeDeleteView(RoleRequiredMixin, DeleteView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
-        if is_owner_account(self.object):
-            messages.error(request, "The main owner/admin account cannot be deleted.")
+        if is_protected_admin_account(self.object):
+            messages.error(request, "Protected admin accounts cannot be deleted.")
             return redirect(self.success_url)
         log_activity(
             user=request.user,
@@ -1042,8 +810,8 @@ def archive_employee_view(request, pk):
     if not user_has_role(request.user, ROLE_ADMIN):
         return redirect("dashboard")
     employee = get_object_or_404(User, pk=pk)
-    if is_owner_account(employee):
-        messages.error(request, "The main owner/admin account cannot be archived.")
+    if is_protected_admin_account(employee):
+        messages.error(request, "Protected admin accounts cannot be archived.")
         return redirect("employee-list")
     employee.is_active = False
     employee.save(update_fields=["is_active"])
@@ -1234,35 +1002,6 @@ def restock_product_view(request, pk):
     return redirect(request.POST.get("next") or "product-list")
 
 
-@login_required
-@require_POST
-def restock_ingredient_view(request, pk):
-    if not user_has_role(request.user, ROLE_ADMIN, ROLE_INVENTORY):
-        return redirect("dashboard")
-    ingredient = get_object_or_404(Ingredient, pk=pk)
-    form = RestockIngredientForm(request.POST)
-    if form.is_valid():
-        quantity_change = form.signed_quantity()
-        reason = form.cleaned_data.get("reason") or ""
-        note = form.cleaned_data["note"] or ("Manual stock restock" if quantity_change > 0 else f"Manual stock deduction: {dict(InventoryLog.REASON_CHOICES).get(reason, reason)}")
-        try:
-            adjust_ingredient_stock(
-                ingredient,
-                quantity_change,
-                request.user,
-                note,
-                action=InventoryLog.ACTION_RESTOCK if quantity_change > 0 else InventoryLog.ACTION_ADJUSTMENT,
-                reason=reason,
-            )
-            movement = "increased" if quantity_change > 0 else "decreased"
-            messages.success(request, f"{ingredient.name} stock {movement} successfully.")
-        except ValidationError as exc:
-            messages.error(request, "; ".join(exc.messages))
-    else:
-        messages.error(request, "Could not update ingredient stock. Check the quantity and deduction reason.")
-    return redirect(request.POST.get("next") or "ingredient-list")
-
-
 class ReportsView(RoleRequiredMixin, TemplateView):
     template_name = "bakery/reports.html"
     allowed_roles = (ROLE_ADMIN, ROLE_INVENTORY)
@@ -1289,7 +1028,6 @@ class ReportsView(RoleRequiredMixin, TemplateView):
                 "total_profit": total_profit,
                 "product_profits": product_profits[:6],
                 "low_products": Product.objects.filter(stock_quantity__lte=F("low_stock_threshold")),
-                "low_ingredients": Ingredient.objects.filter(quantity_in_stock__lte=F("reorder_level")),
                 "expired_products": Product.objects.filter(expiry_date__lt=timezone.localdate(), is_archived=False),
                 "voided_sales": Sale.objects.filter(status=Sale.STATUS_VOIDED)[:8],
                 "restore_form": BackupRestoreForm(),
@@ -1401,7 +1139,6 @@ def sales_csv_export(request):
 def backup_database_view(request):
     if not user_has_role(request.user, ROLE_ADMIN):
         return redirect("dashboard")
-    from django.conf import settings
 
     if settings.DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":
         messages.warning(request, "Database backup download is only available for SQLite in this build.")

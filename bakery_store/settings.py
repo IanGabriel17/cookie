@@ -121,13 +121,6 @@ EMAIL_HOST_USER = os.environ.get("DJANGO_EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("DJANGO_EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("DJANGO_EMAIL_USE_TLS", "False").lower() == "true"
 DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "Sweet Crumbs Bakery <noreply@sweetcrumbs.local>")
-EMAIL_VERIFICATION_TOKEN_HOURS = int(os.environ.get("EMAIL_VERIFICATION_TOKEN_HOURS", "48"))
-LOW_STOCK_EMAIL_ENABLED = os.environ.get("LOW_STOCK_EMAIL_ENABLED", "False").lower() == "true"
-LOW_STOCK_EMAIL_RECIPIENTS = [
-    email.strip()
-    for email in os.environ.get("LOW_STOCK_EMAIL_RECIPIENTS", "").split(",")
-    if email.strip()
-]
 
 MESSAGE_TAGS = {
     10: "secondary",

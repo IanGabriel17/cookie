@@ -1,11 +1,9 @@
-from decimal import Decimal
-
 from django import forms
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, SetPasswordForm, UserCreationForm
 from django.contrib.auth.models import Group, User
 from django.core.exceptions import ValidationError
 
-from .models import Category, Ingredient, IngredientPurchase, InventoryLog, Order, Product, ProductionBatch, Recipe, Sale, Supplier
+from .models import Category, InventoryLog, Order, Product, ProductionBatch, Supplier
 from .services import ROLE_ADMIN, ROLE_CASHIER, ROLE_INVENTORY, generate_product_barcode, generate_product_sku
 
 
@@ -106,53 +104,10 @@ class ProductForm(StyledFormMixin, forms.ModelForm):
         return cleaned_data
 
 
-class IngredientForm(StyledFormMixin, forms.ModelForm):
-    class Meta:
-        model = Ingredient
-        fields = [
-            "name",
-            "quantity_in_stock",
-            "unit",
-            "cost_per_unit",
-            "supplier",
-            "expiration_date",
-            "reorder_level",
-        ]
-        labels = {
-            "name": "Product Name",
-            "quantity_in_stock": "Quantity",
-            "cost_per_unit": "Cost Price",
-            "reorder_level": "Low Stock Level",
-            "expiration_date": "Expiration Date",
-        }
-        widgets = {"expiration_date": forms.DateInput(attrs={"type": "date"})}
-
-
-class RecipeForm(StyledFormMixin, forms.ModelForm):
-    class Meta:
-        model = Recipe
-        fields = ["product", "ingredient", "quantity_required", "unit"]
-
-
 class SupplierForm(StyledFormMixin, forms.ModelForm):
     class Meta:
         model = Supplier
         fields = ["name", "contact_person", "phone", "email", "address", "notes"]
-
-
-class IngredientPurchaseForm(StyledFormMixin, forms.ModelForm):
-    class Meta:
-        model = IngredientPurchase
-        fields = ["supplier", "ingredient", "quantity", "unit", "unit_cost", "expiration_date", "purchased_at", "notes"]
-        labels = {
-            "ingredient": "Product Name",
-            "unit_cost": "Cost Price",
-            "expiration_date": "Expiration Date",
-        }
-        widgets = {
-            "expiration_date": forms.DateInput(attrs={"type": "date"}),
-            "purchased_at": forms.DateInput(attrs={"type": "date"}),
-        }
 
 
 class OrderForm(StyledFormMixin, forms.ModelForm):
@@ -241,10 +196,6 @@ class StockMovementFormMixin(StyledFormMixin, forms.Form):
 
 class RestockProductForm(StockMovementFormMixin):
     quantity = forms.IntegerField(min_value=1)
-
-
-class RestockIngredientForm(StockMovementFormMixin):
-    quantity = forms.DecimalField(min_value=Decimal("0.01"), decimal_places=2, max_digits=12)
 
 
 class PasswordSecurityMixin:

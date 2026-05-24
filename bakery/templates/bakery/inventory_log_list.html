@@ -10,7 +10,7 @@
                 {% for log in object_list %}
                 <tr>
                     <td>{{ log.created_at|date:"M d, Y h:i A" }}</td>
-                    <td>{{ log.product|default:log.ingredient }}</td>
+                    <td>{{ log.product|default:"Product" }}</td>
                     <td>{{ log.get_action_display }}</td>
                     <td>{{ log.get_reason_display|default:"-" }}</td>
                     <td>{{ log.quantity_before }}</td>

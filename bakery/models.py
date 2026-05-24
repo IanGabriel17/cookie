@@ -1,5 +1,4 @@
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -15,10 +14,6 @@ class TimeStampedModel(models.Model):
 
     class Meta:
         abstract = True
-
-
-def default_email_verification_expiry():
-    return timezone.now() + timedelta(hours=getattr(settings, "EMAIL_VERIFICATION_TOKEN_HOURS", 48))
 
 
 class Note(TimeStampedModel):
@@ -141,49 +136,6 @@ class Product(TimeStampedModel):
         return self.sale_items.exclude(sale__status=Sale.STATUS_VOIDED).aggregate(total=Sum("quantity"))["total"] or 0
 
 
-class Ingredient(TimeStampedModel):
-    name = models.CharField(max_length=150, unique=True)
-    unit = models.CharField(max_length=30, default="pcs")
-    quantity_in_stock = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(Decimal("0.00"))])
-    reorder_level = models.DecimalField(max_digits=12, decimal_places=2, default=5, validators=[MinValueValidator(Decimal("0.00"))])
-    cost_per_unit = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(Decimal("0.00"))])
-    supplier = models.ForeignKey("Supplier", on_delete=models.SET_NULL, null=True, blank=True, related_name="stock_items")
-    expiration_date = models.DateField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
-
-    @property
-    def is_low_stock(self):
-        return self.quantity_in_stock <= self.reorder_level
-
-    @property
-    def stock_status(self):
-        if self.quantity_in_stock <= 0:
-            return "Out of Stock"
-        if self.is_low_stock:
-            return "Low Stock"
-        return "In Stock"
-
-
-class Recipe(TimeStampedModel):
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="recipe_items")
-    ingredient = models.ForeignKey(Ingredient, on_delete=models.CASCADE, related_name="recipe_items")
-    quantity_required = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
-    unit = models.CharField(max_length=30, blank=True)
-
-    class Meta:
-        unique_together = ("product", "ingredient")
-        ordering = ["product__name", "ingredient__name"]
-
-    def __str__(self):
-        unit = self.unit or self.ingredient.unit
-        return f"{self.product.name}: {self.quantity_required} {unit} {self.ingredient.name}"
-
-
 class Supplier(TimeStampedModel):
     name = models.CharField(max_length=150)
     contact_person = models.CharField(max_length=150, blank=True)
@@ -197,36 +149,6 @@ class Supplier(TimeStampedModel):
 
     def __str__(self):
         return self.name
-
-
-class IngredientPurchase(TimeStampedModel):
-    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchases")
-    ingredient = models.ForeignKey(Ingredient, on_delete=models.PROTECT, related_name="purchases")
-    quantity = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
-    unit = models.CharField(max_length=30, blank=True)
-    unit_cost = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal("0.00"))])
-    expiration_date = models.DateField(null=True, blank=True)
-    purchased_at = models.DateField(default=timezone.localdate)
-    notes = models.TextField(blank=True)
-
-    class Meta:
-        ordering = ["-purchased_at", "-created_at"]
-
-    def __str__(self):
-        return f"{self.ingredient.name} from {self.supplier.name}"
-
-    def save(self, *args, **kwargs):
-        if not self.unit and self.ingredient_id:
-            self.unit = self.ingredient.unit
-        super().save(*args, **kwargs)
-
-    @property
-    def total_cost(self):
-        return self.quantity * self.unit_cost
-
-    @property
-    def display_unit(self):
-        return self.unit or self.ingredient.unit
 
 
 class Sale(TimeStampedModel):
@@ -374,20 +296,16 @@ class Order(TimeStampedModel):
 
 class InventoryLog(TimeStampedModel):
     ITEM_PRODUCT = "product"
-    ITEM_INGREDIENT = "ingredient"
     ITEM_CHOICES = [
         (ITEM_PRODUCT, "Product"),
-        (ITEM_INGREDIENT, "Ingredient"),
     ]
     ACTION_RESTOCK = "restock"
     ACTION_SALE = "sale"
-    ACTION_PURCHASE = "purchase"
     ACTION_ADJUSTMENT = "adjustment"
     ACTION_VOID = "void"
     ACTION_CHOICES = [
         (ACTION_RESTOCK, "Restock"),
         (ACTION_SALE, "Sale"),
-        (ACTION_PURCHASE, "Purchase"),
         (ACTION_ADJUSTMENT, "Adjustment"),
         (ACTION_VOID, "Void"),
     ]
@@ -410,27 +328,18 @@ class InventoryLog(TimeStampedModel):
     action = models.CharField(max_length=20, choices=ACTION_CHOICES)
     reason = models.CharField(max_length=30, choices=REASON_CHOICES, blank=True)
     product = models.ForeignKey(Product, on_delete=models.CASCADE, null=True, blank=True, related_name="inventory_logs")
-    ingredient = models.ForeignKey(Ingredient, on_delete=models.CASCADE, null=True, blank=True, related_name="inventory_logs")
     quantity_before = models.DecimalField(max_digits=12, decimal_places=2)
     quantity_change = models.DecimalField(max_digits=12, decimal_places=2)
     quantity_after = models.DecimalField(max_digits=12, decimal_places=2)
     note = models.CharField(max_length=255, blank=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     sale = models.ForeignKey(Sale, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_logs")
-    purchase = models.ForeignKey(
-        IngredientPurchase,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="inventory_logs",
-    )
 
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
-        target = self.product or self.ingredient
-        return f"{target} - {self.action}"
+        return f"{self.product or 'Inventory'} - {self.action}"
 
 
 class ProductionBatch(TimeStampedModel):
@@ -469,7 +378,6 @@ class ActivityLog(TimeStampedModel):
     ACTION_BACKUP = "backup"
     ACTION_RESTORE = "restore"
     ACTION_PASSWORD = "password"
-    ACTION_EMAIL = "email"
     ACTION_CHOICES = [
         (ACTION_LOGIN, "Login"),
         (ACTION_LOGOUT, "Logout"),
@@ -483,7 +391,6 @@ class ActivityLog(TimeStampedModel):
         (ACTION_BACKUP, "Backup"),
         (ACTION_RESTORE, "Restore"),
         (ACTION_PASSWORD, "Password"),
-        (ACTION_EMAIL, "Email Verification"),
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
@@ -524,26 +431,3 @@ class LoginHistory(TimeStampedModel):
 
     def __str__(self):
         return f"{self.username or self.user} - {self.get_action_display()}"
-
-
-class EmailVerification(TimeStampedModel):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="email_verifications")
-    email = models.EmailField()
-    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-    activate_on_verify = models.BooleanField(default=True)
-    verified_at = models.DateTimeField(null=True, blank=True)
-    expires_at = models.DateTimeField(default=default_email_verification_expiry)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return f"{self.user} - {self.email}"
-
-    @property
-    def is_verified(self):
-        return self.verified_at is not None
-
-    @property
-    def is_expired(self):
-        return timezone.now() > self.expires_at

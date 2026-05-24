@@ -1,15 +1,11 @@
 from decimal import Decimal
-from datetime import date
-
 from django.contrib.auth.models import Group, User
-from django.core import mail
 from django.core.exceptions import ValidationError
-from django.test import override_settings
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import Category, EmailVerification, Ingredient, IngredientPurchase, Product, Recipe, Sale, Supplier
-from .services import ROLE_INVENTORY, bootstrap_roles, create_sale, reconcile_purchase_update, record_purchase, reverse_purchase_stock, void_sale
+from .models import Category, Product, Sale
+from .services import ROLE_ADMIN, ROLE_CASHIER, ROLE_INVENTORY, bootstrap_roles, create_sale, void_sale
 
 
 class SaleServiceTests(TestCase):
@@ -24,11 +20,8 @@ class SaleServiceTests(TestCase):
             cost=Decimal("300.00"),
             stock_quantity=10,
         )
-        self.flour = Ingredient.objects.create(name="Flour", unit="cups", quantity_in_stock=50, reorder_level=5, cost_per_unit=Decimal("20.00"))
-        Recipe.objects.create(product=self.product, ingredient=self.flour, quantity_required=Decimal("2.00"), unit="cups")
-        self.supplier = Supplier.objects.create(name="Golden Grain Supplies")
 
-    def test_sale_deducts_product_and_ingredient_stock(self):
+    def test_sale_deducts_product_stock(self):
         sale = create_sale(
             cashier=self.user,
             payment_type="cash",
@@ -38,11 +31,9 @@ class SaleServiceTests(TestCase):
         )
 
         self.product.refresh_from_db()
-        self.flour.refresh_from_db()
 
         self.assertEqual(sale.total_amount, Decimal("1000.00"))
         self.assertEqual(self.product.stock_quantity, 8)
-        self.assertEqual(self.flour.quantity_in_stock, Decimal("46.00"))
         self.assertEqual(sale.items.count(), 1)
 
     def test_void_sale_restores_stock_and_records_voided_items(self):
@@ -58,11 +49,9 @@ class SaleServiceTests(TestCase):
 
         sale.refresh_from_db()
         self.product.refresh_from_db()
-        self.flour.refresh_from_db()
 
         self.assertEqual(sale.status, Sale.STATUS_VOIDED)
         self.assertEqual(self.product.stock_quantity, 10)
-        self.assertEqual(self.flour.quantity_in_stock, Decimal("50.00"))
         self.assertEqual(sale.voided_items.count(), 1)
         self.assertEqual(sale.total_profit, Decimal("0.00"))
 
@@ -93,100 +82,6 @@ class SaleServiceTests(TestCase):
         self.product.refresh_from_db()
         self.assertEqual(self.product.stock_quantity, 3)
 
-    def test_sale_rejects_shared_ingredient_shortage(self):
-        second_product = Product.objects.create(
-            name="Vanilla Cake",
-            category=self.category,
-            sku="CK-002",
-            price=Decimal("500.00"),
-            cost=Decimal("250.00"),
-            stock_quantity=10,
-        )
-        Recipe.objects.create(product=second_product, ingredient=self.flour, quantity_required=Decimal("49.00"), unit="cups")
-
-        with self.assertRaises(ValidationError):
-            create_sale(
-                cashier=self.user,
-                payment_type="cash",
-                payment_amount=Decimal("1000.00"),
-                items=[
-                    {"product_id": self.product.id, "quantity": 1},
-                    {"product_id": second_product.id, "quantity": 1},
-                ],
-            )
-
-        self.flour.refresh_from_db()
-        self.assertEqual(self.flour.quantity_in_stock, Decimal("50.00"))
-
-    @override_settings(
-        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
-        LOW_STOCK_EMAIL_ENABLED=True,
-        LOW_STOCK_EMAIL_RECIPIENTS=["stock@example.com"],
-    )
-    def test_sale_crossing_low_stock_threshold_sends_email_alert(self):
-        self.product.stock_quantity = 11
-        self.product.low_stock_threshold = 10
-        self.product.save(update_fields=["stock_quantity", "low_stock_threshold"])
-
-        create_sale(
-            cashier=self.user,
-            payment_type="cash",
-            payment_amount=Decimal("500.00"),
-            items=[{"product_id": self.product.id, "quantity": 1}],
-        )
-
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn("Low stock alert", mail.outbox[0].subject)
-        self.assertIn(self.product.name, mail.outbox[0].body)
-
-    def test_record_purchase_updates_stock_and_metadata(self):
-        purchase = IngredientPurchase.objects.create(
-            supplier=self.supplier,
-            ingredient=self.flour,
-            quantity=Decimal("10.00"),
-            unit_cost=Decimal("22.00"),
-            expiration_date=date(2026, 8, 31),
-        )
-
-        record_purchase(purchase=purchase, user=self.user)
-
-        purchase.refresh_from_db()
-        self.flour.refresh_from_db()
-        self.assertEqual(purchase.unit, "cups")
-        self.assertEqual(self.flour.quantity_in_stock, Decimal("60.00"))
-        self.assertEqual(self.flour.cost_per_unit, Decimal("22.00"))
-        self.assertEqual(self.flour.supplier, self.supplier)
-        self.assertEqual(self.flour.expiration_date, date(2026, 8, 31))
-
-    def test_purchase_update_reconciles_stock_delta(self):
-        purchase = IngredientPurchase.objects.create(
-            supplier=self.supplier,
-            ingredient=self.flour,
-            quantity=Decimal("10.00"),
-            unit_cost=Decimal("22.00"),
-        )
-        record_purchase(purchase=purchase, user=self.user)
-        previous_purchase = IngredientPurchase.objects.get(pk=purchase.pk)
-
-        purchase.quantity = Decimal("4.00")
-        purchase.save(update_fields=["quantity"])
-        reconcile_purchase_update(purchase=purchase, previous_purchase=previous_purchase, user=self.user)
-
-        self.flour.refresh_from_db()
-        self.assertEqual(self.flour.quantity_in_stock, Decimal("54.00"))
-
-    def test_purchase_delete_rejects_negative_stock(self):
-        purchase = IngredientPurchase.objects.create(
-            supplier=self.supplier,
-            ingredient=self.flour,
-            quantity=Decimal("60.00"),
-            unit_cost=Decimal("22.00"),
-        )
-
-        with self.assertRaises(ValidationError):
-            reverse_purchase_stock(purchase=purchase, user=self.user)
-
-
 class ProductCategoryWorkflowTests(TestCase):
     def setUp(self):
         bootstrap_roles()
@@ -213,18 +108,14 @@ class ProductCategoryWorkflowTests(TestCase):
         self.assertContains(category_response, "Pastries")
 
 
-@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
-class EmployeeVerificationTests(TestCase):
+class EmployeeAccountTests(TestCase):
     def setUp(self):
         bootstrap_roles()
-        self.admin = User.objects.create_superuser(
-            username="admin",
-            email="owner@example.com",
-            password="Admin@123",
-        )
+        self.admin = User.objects.create_user(username="manager", password="RolePass#123", is_staff=True)
+        self.admin.groups.add(Group.objects.get(name=ROLE_ADMIN))
         self.client.force_login(self.admin)
 
-    def test_employee_creation_hashes_password_and_requires_email_verification(self):
+    def test_employee_creation_hashes_password_and_assigns_role(self):
         response = self.client.post(
             reverse("employee-add"),
             {
@@ -241,18 +132,53 @@ class EmployeeVerificationTests(TestCase):
 
         self.assertRedirects(response, reverse("employee-list"))
         employee = User.objects.get(username="newcashier")
-        self.assertFalse(employee.is_active)
+        self.assertTrue(employee.is_active)
         self.assertNotEqual(employee.password, "OvenShift#789")
         self.assertTrue(employee.check_password("OvenShift#789"))
+        self.assertTrue(employee.groups.filter(name=ROLE_CASHIER).exists())
 
-        verification = EmailVerification.objects.get(user=employee)
-        self.assertEqual(verification.email, "newcashier@example.com")
-        self.assertEqual(len(mail.outbox), 1)
+    def test_admin_can_assign_roles_to_other_accounts(self):
+        employee = User.objects.create_user(username="stocker", password="Stocker#123", is_staff=True)
+        employee.groups.add(Group.objects.get(name=ROLE_CASHIER))
 
-        verify_response = self.client.get(reverse("verify-email", args=[verification.token]))
-        self.assertRedirects(verify_response, reverse("login"))
+        response = self.client.post(
+            reverse("employee-edit", args=[employee.pk]),
+            {
+                "username": "stocker",
+                "first_name": "",
+                "last_name": "",
+                "email": "",
+                "role": ROLE_INVENTORY,
+                "is_active": "on",
+            },
+        )
 
         employee.refresh_from_db()
-        verification.refresh_from_db()
+        self.assertRedirects(response, reverse("employee-list"))
         self.assertTrue(employee.is_active)
-        self.assertIsNotNone(verification.verified_at)
+        self.assertTrue(employee.groups.filter(name=ROLE_INVENTORY).exists())
+
+    def test_last_active_admin_cannot_be_deleted_archived_or_stripped(self):
+        archive_response = self.client.post(reverse("employee-archive", args=[self.admin.pk]))
+        self.assertRedirects(archive_response, reverse("employee-list"))
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_active)
+
+        update_response = self.client.post(
+            reverse("employee-edit", args=[self.admin.pk]),
+            {
+                "username": "manager",
+                "first_name": "",
+                "last_name": "",
+                "email": "",
+                "role": ROLE_CASHIER,
+                "is_active": "on",
+            },
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.groups.filter(name=ROLE_ADMIN).exists())
+
+        delete_response = self.client.post(reverse("employee-delete", args=[self.admin.pk]))
+        self.assertRedirects(delete_response, reverse("employee-list"))
+        self.assertTrue(User.objects.filter(pk=self.admin.pk).exists())

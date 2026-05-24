@@ -107,44 +107,6 @@ CREATE TABLE `bakery_category` (
   UNIQUE KEY `name` (`name`)
 ) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-DROP TABLE IF EXISTS `bakery_ingredient`;
-CREATE TABLE `bakery_ingredient` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `created_at` datetime(6) NOT NULL,
-  `updated_at` datetime(6) NOT NULL,
-  `name` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `unit` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `quantity_in_stock` decimal(12,2) NOT NULL,
-  `reorder_level` decimal(12,2) NOT NULL,
-  `cost_per_unit` decimal(10,2) NOT NULL,
-  `expiration_date` date DEFAULT NULL,
-  `supplier_id` bigint DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `name` (`name`),
-  KEY `bakery_ingredient_supplier_id_2a9dfc31_fk_bakery_supplier_id` (`supplier_id`),
-  CONSTRAINT `bakery_ingredient_supplier_id_2a9dfc31_fk_bakery_supplier_id` FOREIGN KEY (`supplier_id`) REFERENCES `bakery_supplier` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-DROP TABLE IF EXISTS `bakery_ingredientpurchase`;
-CREATE TABLE `bakery_ingredientpurchase` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `created_at` datetime(6) NOT NULL,
-  `updated_at` datetime(6) NOT NULL,
-  `quantity` decimal(12,2) NOT NULL,
-  `unit_cost` decimal(10,2) NOT NULL,
-  `purchased_at` date NOT NULL,
-  `notes` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
-  `ingredient_id` bigint NOT NULL,
-  `supplier_id` bigint NOT NULL,
-  `expiration_date` date DEFAULT NULL,
-  `unit` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `bakery_ingredientpur_ingredient_id_299b72cf_fk_bakery_in` (`ingredient_id`),
-  KEY `bakery_ingredientpur_supplier_id_39ac0618_fk_bakery_su` (`supplier_id`),
-  CONSTRAINT `bakery_ingredientpur_ingredient_id_299b72cf_fk_bakery_in` FOREIGN KEY (`ingredient_id`) REFERENCES `bakery_ingredient` (`id`),
-  CONSTRAINT `bakery_ingredientpur_supplier_id_39ac0618_fk_bakery_su` FOREIGN KEY (`supplier_id`) REFERENCES `bakery_supplier` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 DROP TABLE IF EXISTS `bakery_inventorylog`;
 CREATE TABLE `bakery_inventorylog` (
   `id` bigint NOT NULL AUTO_INCREMENT,
@@ -156,21 +118,15 @@ CREATE TABLE `bakery_inventorylog` (
   `quantity_change` decimal(12,2) NOT NULL,
   `quantity_after` decimal(12,2) NOT NULL,
   `note` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `ingredient_id` bigint DEFAULT NULL,
-  `purchase_id` bigint DEFAULT NULL,
   `user_id` int DEFAULT NULL,
   `product_id` bigint DEFAULT NULL,
   `sale_id` bigint DEFAULT NULL,
   `reason` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `bakery_inventorylog_ingredient_id_ab3a96ac_fk_bakery_in` (`ingredient_id`),
-  KEY `bakery_inventorylog_purchase_id_ca0faa20_fk_bakery_in` (`purchase_id`),
   KEY `bakery_inventorylog_user_id_47dd1a22_fk_auth_user_id` (`user_id`),
   KEY `bakery_inventorylog_product_id_8b2c1652_fk_bakery_product_id` (`product_id`),
   KEY `bakery_inventorylog_sale_id_fb6c00a0_fk_bakery_sale_id` (`sale_id`),
-  CONSTRAINT `bakery_inventorylog_ingredient_id_ab3a96ac_fk_bakery_in` FOREIGN KEY (`ingredient_id`) REFERENCES `bakery_ingredient` (`id`),
   CONSTRAINT `bakery_inventorylog_product_id_8b2c1652_fk_bakery_product_id` FOREIGN KEY (`product_id`) REFERENCES `bakery_product` (`id`),
-  CONSTRAINT `bakery_inventorylog_purchase_id_ca0faa20_fk_bakery_in` FOREIGN KEY (`purchase_id`) REFERENCES `bakery_ingredientpurchase` (`id`),
   CONSTRAINT `bakery_inventorylog_sale_id_fb6c00a0_fk_bakery_sale_id` FOREIGN KEY (`sale_id`) REFERENCES `bakery_sale` (`id`),
   CONSTRAINT `bakery_inventorylog_user_id_47dd1a22_fk_auth_user_id` FOREIGN KEY (`user_id`) REFERENCES `auth_user` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -277,22 +233,6 @@ CREATE TABLE `bakery_productionbatch` (
   CONSTRAINT `bakery_productionbatch_chk_1` CHECK ((`quantity_produced` >= 0)),
   CONSTRAINT `bakery_productionbatch_chk_2` CHECK ((`quantity_remaining` >= 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-DROP TABLE IF EXISTS `bakery_recipe`;
-CREATE TABLE `bakery_recipe` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `created_at` datetime(6) NOT NULL,
-  `updated_at` datetime(6) NOT NULL,
-  `quantity_required` decimal(10,2) NOT NULL,
-  `unit` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `ingredient_id` bigint NOT NULL,
-  `product_id` bigint NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `bakery_recipe_product_id_ingredient_id_59bee46c_uniq` (`product_id`,`ingredient_id`),
-  KEY `bakery_recipe_ingredient_id_3c4ca263_fk_bakery_ingredient_id` (`ingredient_id`),
-  CONSTRAINT `bakery_recipe_ingredient_id_3c4ca263_fk_bakery_ingredient_id` FOREIGN KEY (`ingredient_id`) REFERENCES `bakery_ingredient` (`id`),
-  CONSTRAINT `bakery_recipe_product_id_b5b25286_fk_bakery_product_id` FOREIGN KEY (`product_id`) REFERENCES `bakery_product` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DROP TABLE IF EXISTS `bakery_sale`;
 CREATE TABLE `bakery_sale` (

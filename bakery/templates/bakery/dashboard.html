@@ -87,11 +87,8 @@
             <div class="list-stack">
                 {% for product in low_products %}
                 <div class="list-item"><span>{{ product.name }}</span><strong>{{ product.stock_quantity }} pcs</strong></div>
-                {% endfor %}
-                {% for ingredient in low_ingredients %}
-                <div class="list-item"><span>{{ ingredient.name }}</span><strong>{{ ingredient.quantity_in_stock }} {{ ingredient.unit }}</strong></div>
                 {% empty %}
-                {% if low_products|length == 0 %}<p class="text-muted mb-0">Inventory levels look healthy.</p>{% endif %}
+                <p class="text-muted mb-0">Inventory levels look healthy.</p>
                 {% endfor %}
             </div>
         </div>

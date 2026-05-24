@@ -1,19 +1,23 @@
 # Bakery Sales and Inventory System
 
-A Django-based bakery management app for point-of-sale, inventory, ingredients, orders, suppliers, and reporting.
+A Django-based bakery management app for point-of-sale, product inventory, orders, suppliers, and reporting.
 
 ## Features
 
 - Role-aware dashboard for Admin, Cashier, and Inventory Staff
-- Product, ingredient, recipe, supplier, employee, production batch, and order management
+- Database-based user accounts
+- Dynamic login system
+- Role-based access control
+- Product, supplier, employee, production batch, and order management
 - Product images, unique SKU/item ID/barcode values, supplier/date metadata, archive support, and category colors
-- POS workflow with barcode lookup, walk-in/online sale type, discounts, tax, and automatic product and ingredient deduction
+- POS workflow with barcode lookup, walk-in/online sale type, discounts, tax, and automatic product stock deduction
 - Admin-approved sale voids with automatic stock restoration and voided-item records
 - Inventory history logs and low-stock alerts
-- Activity audit trail and login history
-- Forgot-password email flow and employee email verification
-- Password hashing, password complexity checks, session timeout, and role-based permissions
-- Optional low-stock email notifications
+- Audit trail/logs and login history
+- Session timeout
+- SQL injection protection through Django ORM queries and validated forms
+- Forgot-password email flow
+- Password hashing and password complexity checks
 - Sales reporting with PDF, Excel, and CSV exports
 - Printable browser receipt and PDF receipt output
 - SQLite for development with MySQL and PostgreSQL environment support
@@ -26,14 +30,13 @@ python -m pip install -r requirements.txt
 python manage.py makemigrations
 python manage.py migrate
 python manage.py seed_bakery_demo
+python manage.py createsuperuser
 python manage.py runserver
 ```
 
-## Demo Accounts
+## User Accounts
 
-- `admin` / `Admin@123`
-- `cashier` / `Cashier@123`
-- `inventory` / `Inventory@123`
+Accounts are stored in the database. Create the first admin with `python manage.py createsuperuser`, then use the Employees screen to add staff and assign Admin, Cashier, or Inventory Staff roles.
 
 ## Database Configuration
 
@@ -55,7 +58,7 @@ If `MYSQL_DB` is not set, you can still switch to PostgreSQL with:
 
 ## Email Configuration
 
-By default, emails are written to the console during development. Set these environment variables to send real email:
+By default, password reset emails are written to the console during development. Set these environment variables to send real password reset email:
 
 - `DJANGO_EMAIL_BACKEND`
 - `DJANGO_EMAIL_HOST`
@@ -64,16 +67,11 @@ By default, emails are written to the console during development. Set these envi
 - `DJANGO_EMAIL_HOST_PASSWORD`
 - `DJANGO_EMAIL_USE_TLS`
 - `DJANGO_DEFAULT_FROM_EMAIL`
-- `EMAIL_VERIFICATION_TOKEN_HOURS`
-
-To enable low-stock email alerts, set:
-
-- `LOW_STOCK_EMAIL_ENABLED=True`
-- `LOW_STOCK_EMAIL_RECIPIENTS=owner@example.com,inventory@example.com`
 
 ## Notes
 
-- The seed command creates user roles, default employee accounts, and starter product categories. Products, stock items, suppliers, and transactions should be created through the app.
+- The seed command creates user roles and starter product categories only. It does not create hard-coded user accounts.
+- Owner/superuser accounts cannot be deleted or archived, and the last active admin account cannot lose Admin access.
 - Uploaded product images are stored in `media/products/`.
 - The backup download route is intended for SQLite backups in development or small deployments.
 - Passwords must be at least 8 characters and include uppercase, lowercase, number, and special character, such as `Example@123`.

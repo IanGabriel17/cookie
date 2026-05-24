@@ -1,15 +1,12 @@
-from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 
-from django.conf import settings
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
-from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F
 from django.utils import timezone
 
-from .models import ActivityLog, Category, Ingredient, IngredientPurchase, InventoryLog, Product, Sale, SaleItem, VoidedSaleItem
+from .models import ActivityLog, Category, InventoryLog, Product, Sale, SaleItem, VoidedSaleItem
 
 ROLE_ADMIN = "Admin"
 ROLE_CASHIER = "Cashier"
@@ -89,9 +86,7 @@ def create_inventory_log(
     note="",
     reason="",
     product=None,
-    ingredient=None,
     sale=None,
-    purchase=None,
 ):
     InventoryLog.objects.create(
         item_type=item_type,
@@ -103,53 +98,8 @@ def create_inventory_log(
         note=note,
         reason=reason,
         product=product,
-        ingredient=ingredient,
         sale=sale,
-        purchase=purchase,
     )
-
-
-def low_stock_email_recipients():
-    configured_recipients = getattr(settings, "LOW_STOCK_EMAIL_RECIPIENTS", [])
-    if configured_recipients:
-        return configured_recipients
-    return list(
-        User.objects.filter(
-            Q(is_superuser=True) | Q(groups__name__in=[ROLE_ADMIN, ROLE_INVENTORY]),
-            is_active=True,
-        )
-        .exclude(email="")
-        .values_list("email", flat=True)
-        .distinct()
-    )
-
-
-def maybe_send_low_stock_email(*, item_name, item_type, before, after, threshold, unit="pcs"):
-    before = Decimal(before)
-    after = Decimal(after)
-    threshold = Decimal(threshold)
-    if not getattr(settings, "LOW_STOCK_EMAIL_ENABLED", False):
-        return False
-    if not (before > threshold and after <= threshold):
-        return False
-
-    recipients = low_stock_email_recipients()
-    if not recipients:
-        return False
-
-    send_mail(
-        subject=f"Low stock alert: {item_name}",
-        message=(
-            f"{item_type} '{item_name}' reached the low-stock level.\n\n"
-            f"Previous quantity: {_format_stock_quantity(before)} {unit}\n"
-            f"Current quantity: {_format_stock_quantity(after)} {unit}\n"
-            f"Low-stock threshold: {_format_stock_quantity(threshold)} {unit}\n"
-        ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=recipients,
-        fail_silently=True,
-    )
-    return True
 
 
 def _format_stock_quantity(value):
@@ -187,14 +137,6 @@ def adjust_product_stock(product, quantity_change, user=None, note="", action=In
         description=note or f"Product stock changed by {_format_stock_quantity(quantity_change)}.",
         metadata={"before": str(before), "change": str(quantity_change), "after": str(product.stock_quantity), "reason": reason},
     )
-    maybe_send_low_stock_email(
-        item_name=product.name,
-        item_type="Product",
-        before=before,
-        after=product.stock_quantity,
-        threshold=product.low_stock_threshold,
-        unit="pcs",
-    )
     return product
 
 
@@ -206,67 +148,6 @@ def restock_product(product, quantity, user=None, note="", reason=InventoryLog.R
         user=user,
         note=note,
         action=InventoryLog.ACTION_RESTOCK,
-        reason=reason,
-    )
-
-
-@transaction.atomic
-def adjust_ingredient_stock(ingredient, quantity_change, user=None, note="", purchase=None, action=InventoryLog.ACTION_ADJUSTMENT, reason=""):
-    quantity_change = Decimal(quantity_change)
-    ingredient = Ingredient.objects.select_for_update().get(pk=ingredient.pk)
-    before = ingredient.quantity_in_stock
-    after = before + quantity_change
-    if after < 0:
-        raise ValidationError(f"Stock for {ingredient.name} cannot go below zero.")
-    Ingredient.objects.filter(pk=ingredient.pk).update(quantity_in_stock=after)
-    ingredient.refresh_from_db()
-    create_inventory_log(
-        item_type=InventoryLog.ITEM_INGREDIENT,
-        action=action,
-        quantity_before=before,
-        quantity_change=quantity_change,
-        quantity_after=ingredient.quantity_in_stock,
-        user=user,
-        note=note,
-        reason=reason,
-        ingredient=ingredient,
-        purchase=purchase,
-    )
-    log_activity(
-        user=user,
-        action=ActivityLog.ACTION_STOCK,
-        instance=ingredient,
-        description=note or f"Ingredient stock changed by {_format_stock_quantity(quantity_change)}.",
-        metadata={"before": str(before), "change": str(quantity_change), "after": str(ingredient.quantity_in_stock), "reason": reason},
-    )
-    maybe_send_low_stock_email(
-        item_name=ingredient.name,
-        item_type="Stock item",
-        before=before,
-        after=ingredient.quantity_in_stock,
-        threshold=ingredient.reorder_level,
-        unit=ingredient.unit,
-    )
-    return ingredient
-
-
-@transaction.atomic
-def restock_ingredient(
-    ingredient,
-    quantity,
-    user=None,
-    note="",
-    purchase=None,
-    action=InventoryLog.ACTION_RESTOCK,
-    reason=InventoryLog.REASON_RESTOCK,
-):
-    return adjust_ingredient_stock(
-        ingredient=ingredient,
-        quantity_change=quantity,
-        user=user,
-        note=note,
-        purchase=purchase,
-        action=action,
         reason=reason,
     )
 
@@ -307,7 +188,7 @@ def create_sale(
         raise ValidationError("Tax rate cannot be negative.")
     subtotal = Decimal("0.00")
     normalized_items = []
-    requested_quantities = defaultdict(int)
+    requested_quantities = {}
 
     for item in items:
         try:
@@ -317,7 +198,7 @@ def create_sale(
             raise ValidationError("Invalid product or quantity in sale items.")
         if quantity <= 0:
             raise ValidationError("Invalid product or quantity in sale items.")
-        requested_quantities[product_id] += quantity
+        requested_quantities[product_id] = requested_quantities.get(product_id, 0) + quantity
 
     products = {
         product.id: product
@@ -325,8 +206,6 @@ def create_sale(
     }
     if len(products) != len(requested_quantities):
         raise ValidationError("Invalid product or quantity in sale items.")
-
-    ingredient_requirements = defaultdict(Decimal)
 
     for product_id, quantity in requested_quantities.items():
         product = products[product_id]
@@ -344,19 +223,6 @@ def create_sale(
                 "line_total": line_total,
             }
         )
-
-        for recipe in product.recipe_items.select_related("ingredient"):
-            needed = recipe.quantity_required * quantity
-            ingredient_requirements[recipe.ingredient_id] += needed
-
-    ingredients = {
-        ingredient.id: ingredient
-        for ingredient in Ingredient.objects.select_for_update().filter(id__in=ingredient_requirements.keys())
-    }
-    for ingredient_id, needed in ingredient_requirements.items():
-        ingredient = ingredients[ingredient_id]
-        if ingredient.quantity_in_stock < needed:
-            raise ValidationError(f"Not enough ingredient stock for {ingredient.name}.")
 
     discount_amount = _discount_amount(subtotal, discount_type, promo_discount_amount)
     taxable_amount = subtotal - discount_amount
@@ -400,39 +266,6 @@ def create_sale(
             product=product,
             sale=sale,
         )
-        maybe_send_low_stock_email(
-            item_name=product.name,
-            item_type="Product",
-            before=before,
-            after=product.stock_quantity,
-            threshold=product.low_stock_threshold,
-            unit="pcs",
-        )
-
-    for ingredient_id, needed in ingredient_requirements.items():
-        ingredient = ingredients[ingredient_id]
-        before_ingredient = ingredient.quantity_in_stock
-        Ingredient.objects.filter(pk=ingredient.pk).update(quantity_in_stock=F("quantity_in_stock") - needed)
-        ingredient.refresh_from_db()
-        create_inventory_log(
-            item_type=InventoryLog.ITEM_INGREDIENT,
-            action=InventoryLog.ACTION_SALE,
-            quantity_before=before_ingredient,
-            quantity_change=-needed,
-            quantity_after=ingredient.quantity_in_stock,
-            user=cashier,
-            note=f"Used in {sale.receipt_number}",
-            ingredient=ingredient,
-            sale=sale,
-        )
-        maybe_send_low_stock_email(
-            item_name=ingredient.name,
-            item_type="Stock item",
-            before=before_ingredient,
-            after=ingredient.quantity_in_stock,
-            threshold=ingredient.reorder_level,
-            unit=ingredient.unit,
-        )
     log_activity(
         user=cashier,
         action=ActivityLog.ACTION_SALE,
@@ -449,7 +282,7 @@ def void_sale(*, sale, approved_by, reason):
     if not reason:
         raise ValidationError("Void reason is required.")
 
-    sale = Sale.objects.select_for_update().prefetch_related("items__product__recipe_items__ingredient").get(pk=sale.pk)
+    sale = Sale.objects.select_for_update().prefetch_related("items__product").get(pk=sale.pk)
     if sale.status == Sale.STATUS_VOIDED:
         raise ValidationError("This sale is already voided.")
 
@@ -478,26 +311,6 @@ def void_sale(*, sale, approved_by, reason):
             line_total=item.line_total,
             reason=reason,
         )
-
-        for recipe in product.recipe_items.select_related("ingredient"):
-            needed = recipe.quantity_required * item.quantity
-            ingredient = Ingredient.objects.select_for_update().get(pk=recipe.ingredient_id)
-            before_ingredient = ingredient.quantity_in_stock
-            Ingredient.objects.filter(pk=ingredient.pk).update(quantity_in_stock=F("quantity_in_stock") + needed)
-            ingredient.refresh_from_db()
-            create_inventory_log(
-                item_type=InventoryLog.ITEM_INGREDIENT,
-                action=InventoryLog.ACTION_VOID,
-                quantity_before=before_ingredient,
-                quantity_change=needed,
-                quantity_after=ingredient.quantity_in_stock,
-                user=approved_by,
-                note=f"Restored from voided sale {sale.receipt_number}",
-                reason=InventoryLog.REASON_RETURNED,
-                ingredient=ingredient,
-                sale=sale,
-            )
-
     sale.status = Sale.STATUS_VOIDED
     sale.void_reason = reason
     sale.voided_by = approved_by
@@ -512,74 +325,3 @@ def void_sale(*, sale, approved_by, reason):
     )
     return sale
 
-
-@transaction.atomic
-def record_purchase(*, purchase: IngredientPurchase, user=None):
-    ingredient = Ingredient.objects.select_for_update().get(pk=purchase.ingredient_id)
-    ingredient.cost_per_unit = purchase.unit_cost
-    ingredient.supplier = purchase.supplier
-    ingredient.expiration_date = purchase.expiration_date
-    ingredient.save(update_fields=["cost_per_unit", "supplier", "expiration_date", "updated_at"])
-    restock_ingredient(
-        ingredient=ingredient,
-        quantity=purchase.quantity,
-        user=user,
-        note=f"Purchased from {purchase.supplier.name}",
-        purchase=purchase,
-        action=InventoryLog.ACTION_PURCHASE,
-        reason=InventoryLog.REASON_RESTOCK,
-    )
-
-
-@transaction.atomic
-def reconcile_purchase_update(*, purchase: IngredientPurchase, previous_purchase: IngredientPurchase, user=None):
-    if not purchase.unit:
-        purchase.unit = purchase.ingredient.unit
-        purchase.save(update_fields=["unit", "updated_at"])
-
-    if previous_purchase.ingredient_id == purchase.ingredient_id:
-        delta = purchase.quantity - previous_purchase.quantity
-        if delta:
-            adjust_ingredient_stock(
-                ingredient=purchase.ingredient,
-                quantity_change=delta,
-                user=user,
-                note=f"Purchase updated: {_format_stock_quantity(delta)} {purchase.display_unit}",
-                purchase=purchase,
-                action=InventoryLog.ACTION_PURCHASE if delta > 0 else InventoryLog.ACTION_ADJUSTMENT,
-            )
-    else:
-        adjust_ingredient_stock(
-            ingredient=previous_purchase.ingredient,
-            quantity_change=-previous_purchase.quantity,
-            user=user,
-            note=f"Purchase moved to {purchase.ingredient.name}",
-            purchase=purchase,
-            action=InventoryLog.ACTION_ADJUSTMENT,
-        )
-        adjust_ingredient_stock(
-            ingredient=purchase.ingredient,
-            quantity_change=purchase.quantity,
-            user=user,
-            note=f"Purchase moved from {previous_purchase.ingredient.name}",
-            purchase=purchase,
-            action=InventoryLog.ACTION_PURCHASE,
-        )
-
-    ingredient = Ingredient.objects.select_for_update().get(pk=purchase.ingredient_id)
-    ingredient.cost_per_unit = purchase.unit_cost
-    ingredient.supplier = purchase.supplier
-    ingredient.expiration_date = purchase.expiration_date
-    ingredient.save(update_fields=["cost_per_unit", "supplier", "expiration_date", "updated_at"])
-
-
-@transaction.atomic
-def reverse_purchase_stock(*, purchase: IngredientPurchase, user=None):
-    adjust_ingredient_stock(
-        ingredient=purchase.ingredient,
-        quantity_change=-purchase.quantity,
-        user=user,
-        note=f"Deleted purchase from {purchase.supplier.name}",
-        purchase=purchase,
-        action=InventoryLog.ACTION_ADJUSTMENT,
-    )

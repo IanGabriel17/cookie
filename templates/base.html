@@ -38,7 +38,6 @@
             {% endif %}
             {% if can_manage_inventory %}
             <a class="side-link {% if current == 'product-list' or current == 'product-add' or current == 'product-edit' %}side-link-active{% endif %}" href="{% url 'product-list' %}" title="Products"><i class="bi bi-grid"></i></a>
-            <a class="side-link {% if current == 'ingredient-list' or current == 'ingredient-add' or current == 'ingredient-edit' %}side-link-active{% endif %}" href="{% url 'ingredient-list' %}" title="Ingredients"><i class="bi bi-archive"></i></a>
             <a class="side-link {% if current == 'production-batch-list' %}side-link-active{% endif %}" href="{% url 'production-batch-list' %}" title="Production"><i class="bi bi-journal-check"></i></a>
             {% endif %}
             {% if can_view_orders %}
